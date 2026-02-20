@@ -36,7 +36,12 @@ func RecoveryMiddleware() Middleware {
 	}
 }
 
-func RegisteredOnlyMiddleware(users *repository.UsersRepo, allowCommands ...string) Middleware {
+func RegisteredOnlyMiddleware(
+	users *repository.UsersRepo,
+	setScene func(userID int64, scene string),
+	startRegister func(api *tgbotapi.BotAPI, m *tgbotapi.Message) error,
+	allowCommands ...string,
+) Middleware {
 	allowed := make(map[string]struct{}, len(allowCommands))
 	for _, c := range allowCommands {
 		allowed[strings.ToLower(strings.TrimSpace(c))] = struct{}{}
@@ -44,27 +49,30 @@ func RegisteredOnlyMiddleware(users *repository.UsersRepo, allowCommands ...stri
 
 	return func(next HandlerFunc) HandlerFunc {
 		return func(api *tgbotapi.BotAPI, m *tgbotapi.Message) error {
-			// non-command message routing bo'lishi mumkin; biz command handlerlar uchun ishlatyapmiz
+			// Allow-list commandlar
 			cmd := strings.ToLower(strings.TrimSpace(m.Command()))
 			if _, ok := allowed[cmd]; ok {
 				return next(api, m)
 			}
 
+			// Safety
 			if m.From == nil {
 				return next(api, m)
 			}
 
-			ok, err := users.ExistsByTgUserID(context.Background(), int64(m.From.ID))
+			uid := int64(m.From.ID)
+
+			ok, err := users.ExistsByTgUserID(context.Background(), uid)
 			if err != nil {
 				log.Printf("auth exists error: %v", err)
 				_, _ = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Auth error. Keyinroq urinib ko'ring."))
 				return nil
 			}
 
+			// ❗️Not registered → register sceneni avtomatik boshlaymiz
 			if !ok {
-				_, _ = api.Send(tgbotapi.NewMessage(m.Chat.ID,
-					"Avval ro'yxatdan o'ting: /register\nYoki /start"))
-				return nil
+				setScene(uid, "register")
+				return startRegister(api, m) // bu "Ismingizni kiriting..." deb yuboradi
 			}
 
 			return next(api, m)

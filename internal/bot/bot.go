@@ -49,11 +49,16 @@ func New(cfg config.BotConfig, db *sql.DB) (*Bot, error) {
 	r := NewRouter(api)
 	r.Use(RecoveryMiddleware())
 	r.Use(LoggingMiddleware())
+	r.Use(RegisteredOnlyMiddleware(
+		usersRepo,
+		func(userID int64, scene string) { sceneMgr.Set(userID, scene) },
+		regScene.Start,
+	))
 
 	// Register commands
 	r.Register("start", commands.Start)
-	// r.Register("help", commands.Help)
-	// r.Register("ping", commands.Ping)
+	r.Register("help", commands.Help)
+	r.Register("ping", commands.Ping)
 
 	// /register command: scene start qiladi
 	r.Register("register", func(api *tgbotapi.BotAPI, m *tgbotapi.Message) error {
