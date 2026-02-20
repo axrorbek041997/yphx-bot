@@ -1,0 +1,16 @@
+services:
+  postgres:
+    container_name: yphx_pg
+    image: postgres:16
+    ports:
+      - "${DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+
+  redis:
+    container_name: yphx_redis
+    image: redis:7
+    ports:
+      - "${REDIS_PORT}:6379"
