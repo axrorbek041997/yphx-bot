@@ -1,6 +1,10 @@
 package bot
 
-import tele "gopkg.in/telebot.v3"
+import (
+	"yphx-bot/internal/bot/commands"
+
+	tele "gopkg.in/telebot.v3"
+)
 
 type Router struct {
 	bot *tele.Bot
@@ -11,7 +15,5 @@ func NewRouter(bot *tele.Bot) *Router {
 }
 
 func (r *Router) SetupRoutes() {
-	r.bot.Handle("/hello", func(c tele.Context) error {
-		return c.Send("Hello!")
-	})
+	r.bot.Handle("/help", commands.Help)
 }

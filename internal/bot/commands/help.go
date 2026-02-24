@@ -1,9 +1,9 @@
 package commands
 
-import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+import tele "gopkg.in/telebot.v3"
 
-func Help(api *tgbotapi.BotAPI, m *tgbotapi.Message) error {
+func Help(c tele.Context) error {
 	text := "Komandalar:\n/start\n/help\n/ping"
-	_, err := api.Send(tgbotapi.NewMessage(m.Chat.ID, text))
+	_, err := c.Bot().Send(c.Chat(), text)
 	return err
 }
