@@ -10,16 +10,18 @@ import (
 
 	"yphx-bot/internal/config"
 
+	"github.com/redis/go-redis/v9"
 	tele "gopkg.in/telebot.v3"
 )
 
 type Bot struct {
-	cfg config.BotConfig
-	db  *sql.DB
-	bot *tele.Bot
+	cfg   config.BotConfig
+	db    *sql.DB
+	bot   *tele.Bot
+	redis *redis.Client
 }
 
-func New(cfg config.BotConfig, db *sql.DB) (*Bot, error) {
+func New(cfg config.BotConfig, db *sql.DB, redis *redis.Client) (*Bot, error) {
 	if cfg.Token == "" {
 		return nil, fmt.Errorf("BOT_TOKEN is empty")
 	}
@@ -36,12 +38,13 @@ func New(cfg config.BotConfig, db *sql.DB) (*Bot, error) {
 	}
 
 	b := &Bot{
-		cfg: cfg,
-		db:  db,
-		bot: bot,
+		cfg:   cfg,
+		db:    db,
+		bot:   bot,
+		redis: redis,
 	}
 
-	router := NewRouter(bot)
+	router := NewRouter(b, redis, db)
 	router.SetupRoutes()
 
 	return b, nil
@@ -71,15 +74,32 @@ func (b *Bot) runPolling(ctx context.Context) error {
 
 	log.Printf("Bot started in polling mode with timeout=%v", timeout)
 
-	// Run the bot in a separate goroutine
+	done := make(chan struct{})
+
 	go func() {
-		b.bot.Start()
+		defer close(done)
+		b.bot.Start() // blocks until Stop() is called (ideally)
 	}()
 
-	// Wait for context cancellation (e.g., SIGINT)
-	<-ctx.Done()
-	log.Println("Shutting down bot...")
+	select {
+	case <-ctx.Done():
+		log.Printf("Bot polling stopping: %v", ctx.Err())
 
-	b.bot.Stop()
-	return nil
+		// Try to stop telebot
+		b.bot.Stop()
+
+		// Don't wait forever
+		select {
+		case <-done:
+			log.Printf("Bot polling stopped")
+		case <-time.After(3 * time.Second):
+			log.Printf("Bot polling stop timeout; exiting anyway")
+		}
+
+		return ctx.Err()
+
+	case <-done:
+		log.Printf("Bot polling stopped")
+		return nil
+	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -40,7 +41,7 @@ func main() {
 	defer redis.Close()
 	log.Println("Redis connected ✅")
 
-	bot, err := bot.New(cfg.Bot, db)
+	bot, err := bot.New(cfg.Bot, db, redis)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,6 +52,10 @@ func main() {
 
 	// Bot run
 	if err := bot.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Println("shutdown complete")
+			return
+		}
 		log.Fatal(err)
 	}
 }

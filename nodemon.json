@@ -1,6 +1,7 @@
 {
   "watch": ["*"],
-  "ext": "go graphql",
+  "ext": "go,graphql",
   "ignore": ["*gen*.go"],
-  "exec": "go run ./cmd/bot/main.go"
+  "signal": "SIGINT",
+  "exec": "bash -lc 'set -e; go build -o /tmp/bot ./cmd/bot && exec /tmp/bot'"
 }
