@@ -3,6 +3,7 @@ package scenes
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -43,11 +44,15 @@ func (s *RegisterScene) Start(api *tgbotapi.BotAPI, m *tgbotapi.Message) error {
 	s.step[uid] = stepAskName
 	s.mu.Unlock()
 
+	log.Printf("RegisterScene.Start: step=%v", s.step[uid])
+
 	_, err := api.Send(tgbotapi.NewMessage(m.Chat.ID, "Ro'yxatdan o'tish.\nIsmingizni kiriting (masalan: Axror):\n/cancel - bekor qilish"))
 	return err
 }
 
 func (s *RegisterScene) Handle(api *tgbotapi.BotAPI, m *tgbotapi.Message) (done bool, err error) {
+	log.Printf("RegisterScene.Handle: user=%d text=%q", m.From.ID, m.Text)
+
 	uid := int64(m.From.ID)
 	text := strings.TrimSpace(m.Text)
 
