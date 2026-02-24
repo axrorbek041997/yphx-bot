@@ -41,9 +41,8 @@ func New(cfg config.BotConfig, db *sql.DB) (*Bot, error) {
 		bot: bot,
 	}
 
-	bot.Handle("/hello", func(c tele.Context) error {
-		return c.Send("Hello!")
-	})
+	router := NewRouter(bot)
+	router.SetupRoutes()
 
 	return b, nil
 }
