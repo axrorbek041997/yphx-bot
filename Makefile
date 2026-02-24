@@ -2,8 +2,7 @@ ENV_FILE=./.env
 MIGRATIONS_DIR=migrations
 
 run:
-	@set -a; [ -f .env ] && . ./.env; set +a; \
-	go run ./cmd/bot
+	nodemon
 
 env:
 	@set -a; [ -f $(ENV_FILE) ] && . $(ENV_FILE); set +a; echo "env loaded"
