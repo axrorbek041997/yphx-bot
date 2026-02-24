@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	App AppConfig
-	DB  DatabaseConfig
-	Bot BotConfig
+	App   AppConfig
+	DB    DatabaseConfig
+	Bot   BotConfig
+	REDIS RedisConfig
 }
 
 type AppConfig struct {
@@ -32,6 +33,13 @@ func Load() (*Config, error) {
 			ConnMaxIdle:  getEnvDuration("DB_CONN_MAX_IDLE", 5*time.Minute),
 			ConnMaxLife:  getEnvDuration("DB_CONN_MAX_LIFETIME", 60*time.Minute),
 			PingTimeout:  getEnvDuration("DB_PING_TIMEOUT", 5*time.Second),
+		},
+		REDIS: RedisConfig{
+			Host:        getEnv("REDIS_HOST", "localhost"),
+			Port:        getEnvInt("REDIS_PORT", 6379),
+			Db:          getEnvInt("REDIS_DB", 0),
+			Password:    getEnv("REDIS_PASSWORD", ""),
+			PingTimeout: getEnvDuration("REDIS_PING_TIMEOUT", 5*time.Second),
 		},
 	}
 

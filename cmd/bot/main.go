@@ -9,6 +9,7 @@ import (
 	"yphx-bot/internal/bot"
 	"yphx-bot/internal/config"
 	"yphx-bot/internal/database"
+	"yphx-bot/internal/redis"
 
 	"github.com/joho/godotenv"
 )
@@ -30,8 +31,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+	log.Println("PG connected ✅")
 
-	log.Println("DB connected ✅")
+	redis, err := redis.ConnectRedis(cfg.REDIS)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer redis.Close()
+	log.Println("Redis connected ✅")
 
 	bot, err := bot.New(cfg.Bot, db)
 	if err != nil {
