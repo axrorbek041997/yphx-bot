@@ -6,11 +6,16 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
-	"yphx-bot/internal/repository"
+	tele "gopkg.in/telebot.v3"
 )
+
+// ---- Repo interface (so you can plug your real repo easily)
+type UsersRepo interface {
+	ExistsByTgUserID(ctx context.Context, telegramID int64) (bool, error)
+	UpsertRegister(ctx context.Context, telegramID int64, username, name, phone string) error
+}
 
 type registerStep int
 
@@ -21,7 +26,7 @@ const (
 )
 
 type RegisterScene struct {
-	users *repository.UsersRepo
+	users UsersRepo
 
 	mu    sync.RWMutex
 	step  map[int64]registerStep
@@ -29,7 +34,7 @@ type RegisterScene struct {
 	phone map[int64]string
 }
 
-func NewRegisterScene(users *repository.UsersRepo) *RegisterScene {
+func NewRegisterScene(users UsersRepo) *RegisterScene {
 	return &RegisterScene{
 		users: users,
 		step:  make(map[int64]registerStep),
@@ -38,27 +43,27 @@ func NewRegisterScene(users *repository.UsersRepo) *RegisterScene {
 	}
 }
 
-func (s *RegisterScene) Start(api *tgbotapi.BotAPI, m *tgbotapi.Message) error {
-	uid := int64(m.From.ID)
+func (s *RegisterScene) Start(c tele.Context) error {
+	uid := c.Sender().ID
+
 	s.mu.Lock()
 	s.step[uid] = stepAskName
 	s.mu.Unlock()
 
-	log.Printf("RegisterScene.Start: step=%v", s.step[uid])
+	log.Printf("RegisterScene.Start: user=%d step=AskName", uid)
 
-	_, err := api.Send(tgbotapi.NewMessage(m.Chat.ID, "Ro'yxatdan o'tish.\nIsmingizni kiriting (masalan: Axror):\n/cancel - bekor qilish"))
-	return err
+	return c.Send("Ro'yxatdan o'tish.\nIsmingizni kiriting (masalan: Axror):\n/cancel - bekor qilish")
 }
 
-func (s *RegisterScene) Handle(api *tgbotapi.BotAPI, m *tgbotapi.Message) (done bool, err error) {
-	log.Printf("RegisterScene.Handle: user=%d text=%q", m.From.ID, m.Text)
+func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
+	uid := c.Sender().ID
+	text := strings.TrimSpace(c.Text())
 
-	uid := int64(m.From.ID)
-	text := strings.TrimSpace(m.Text)
+	log.Printf("RegisterScene.Handle: user=%d text=%q", uid, text)
 
 	if strings.EqualFold(text, "/cancel") {
 		s.cleanup(uid)
-		_, _ = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Bekor qilindi ✅"))
+		_ = c.Send("Bekor qilindi ✅")
 		return true, nil
 	}
 
@@ -66,29 +71,27 @@ func (s *RegisterScene) Handle(api *tgbotapi.BotAPI, m *tgbotapi.Message) (done 
 	st, ok := s.step[uid]
 	s.mu.RUnlock()
 	if !ok {
-		// Step yo'q bo'lsa, scene start qilinmagan
+		// Scene start qilinmagan bo'lishi mumkin
 		return true, nil
 	}
 
 	switch st {
 	case stepAskName:
-		if len(text) < 2 {
-			_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Ism juda qisqa. Qayta kiriting:"))
-			return false, err
+		if len([]rune(text)) < 2 {
+			return false, c.Send("Ism juda qisqa. Qayta kiriting:")
 		}
 		s.mu.Lock()
 		s.name[uid] = text
 		s.step[uid] = stepAskPhone
 		s.mu.Unlock()
 
-		_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Telefon raqamingizni kiriting (masalan: +998901234567):"))
-		return false, err
+		return false, c.Send("Telefon raqamingizni kiriting (masalan: +998901234567):")
 
 	case stepAskPhone:
 		if !looksLikePhone(text) {
-			_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Telefon formati noto'g'ri. Masalan: +998901234567"))
-			return false, err
+			return false, c.Send("Telefon formati noto'g'ri. Masalan: +998901234567")
 		}
+
 		s.mu.Lock()
 		s.phone[uid] = text
 		s.step[uid] = stepConfirm
@@ -97,19 +100,17 @@ func (s *RegisterScene) Handle(api *tgbotapi.BotAPI, m *tgbotapi.Message) (done 
 		s.mu.Unlock()
 
 		msg := fmt.Sprintf("Tasdiqlaysizmi?\nIsm: %s\nTelefon: %s\n\nHa bo'lsa: yes\nYo'q bo'lsa: no", name, phone)
-		_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, msg))
-		return false, err
+		return false, c.Send(msg)
 
 	case stepConfirm:
 		ans := strings.ToLower(text)
 		if ans == "no" || ans == "yo'q" || ans == "yq" {
 			s.cleanup(uid)
-			_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Bekor qilindi ✅ /register bilan qayta boshlang."))
-			return true, err
+			_ = c.Send("Bekor qilindi ✅ /register bilan qayta boshlang.")
+			return true, nil
 		}
 		if ans != "yes" && ans != "ha" && ans != "ok" {
-			_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Iltimos, 'yes' yoki 'no' deb yozing."))
-			return false, err
+			return false, c.Send("Iltimos, 'yes' yoki 'no' deb yozing.")
 		}
 
 		s.mu.RLock()
@@ -118,18 +119,22 @@ func (s *RegisterScene) Handle(api *tgbotapi.BotAPI, m *tgbotapi.Message) (done 
 		s.mu.RUnlock()
 
 		username := ""
-		if m.From != nil {
-			username = m.From.UserName
+		if c.Sender() != nil {
+			username = c.Sender().Username
 		}
 
-		if err := s.users.UpsertRegister(context.Background(), uid, username, name, phone); err != nil {
-			_, _ = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Saqlashda xatolik. Keyinroq urinib ko'ring."))
+		// DB write with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		if err := s.users.UpsertRegister(ctx, uid, username, name, phone); err != nil {
+			_ = c.Send("Saqlashda xatolik. Keyinroq urinib ko'ring.")
 			return false, err
 		}
 
 		s.cleanup(uid)
-		_, err = api.Send(tgbotapi.NewMessage(m.Chat.ID, "Ro'yxatdan o'tdingiz ✅ Endi botdan foydalanishingiz mumkin. /help"))
-		return true, err
+		_ = c.Send("Ro'yxatdan o'tdingiz ✅ Endi botdan foydalanishingiz mumkin. /help")
+		return true, nil
 	}
 
 	return false, nil
