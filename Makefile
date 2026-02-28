@@ -1,8 +1,11 @@
 ENV_FILE=./.env
 MIGRATIONS_DIR=migrations
 
-run:
+run: up
 	nodemon
+
+up:
+	docker compose up -d
 
 env:
 	@set -a; [ -f $(ENV_FILE) ] && . $(ENV_FILE); set +a; echo "env loaded"
