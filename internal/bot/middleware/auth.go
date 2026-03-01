@@ -21,18 +21,7 @@ func AuthMiddleware(redis *redis.Client, db *sql.DB, scene *scenes.Manager) tele
 
 			uid := c.Sender().ID
 
-			sceneName, ok := scene.Get(uid)
-			if ok {
-				switch sceneName {
-				case "register":
-					scene.Set(uid, "register")
-				default:
-					log.Printf("Unknown scene: %s for user %d", sceneName, uid)
-					scene.Clear(uid) // Clear invalid scene
-					return c.Send("An error occurred. Please try again.")
-				}
-			}
-
+			log.Print("Register middleware")
 			ctx, cancel := utils.RedisCtx()
 			defer cancel()
 
@@ -62,8 +51,10 @@ func AuthMiddleware(redis *redis.Client, db *sql.DB, scene *scenes.Manager) tele
 					return next(c)
 				}
 
-				scene.Set(uid, "register")
-				return c.Send("You are not registered. Please send your phone number to register ✅")
+				register := scenes.NewRegisterScene(userRepo)
+				scene.Set(uid, register)
+				register.Start(c)
+				return nil
 			}
 
 			return next(c)

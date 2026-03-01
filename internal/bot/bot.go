@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"yphx-bot/internal/bot/scenes"
 	"yphx-bot/internal/config"
 
 	"github.com/redis/go-redis/v9"
@@ -20,7 +19,6 @@ type Bot struct {
 	db    *sql.DB
 	bot   *tele.Bot
 	redis *redis.Client
-	scene *scenes.Manager
 }
 
 func New(cfg config.BotConfig, db *sql.DB, redis *redis.Client) (*Bot, error) {
@@ -44,7 +42,6 @@ func New(cfg config.BotConfig, db *sql.DB, redis *redis.Client) (*Bot, error) {
 		db:    db,
 		bot:   bot,
 		redis: redis,
-		scene: scenes.NewManager(),
 	}
 
 	router := NewRouter(b, redis, db)

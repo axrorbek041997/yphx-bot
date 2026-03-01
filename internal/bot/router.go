@@ -14,18 +14,18 @@ type Router struct {
 	bot   *tele.Bot
 	redis *redis.Client
 	db    *sql.DB
-	scene *scenes.Manager
 }
 
 func NewRouter(bot *Bot, redis *redis.Client, db *sql.DB) *Router {
-	return &Router{bot: bot.bot, redis: redis, db: db, scene: bot.scene}
+	return &Router{bot: bot.bot, redis: redis, db: db}
 }
 
 func (r *Router) SetupRoutes() {
-	// usersRepo := repository.NewUsersRepo(r.db)
-	// registerScene := scenes.NewRegisterScene(usersRepo)
+	scManager := scenes.NewManager()
 
-	r.bot.Use(middleware.AuthMiddleware(r.redis, r.db, r.scene))
+	r.bot.Use(middleware.SceneMiddleware(r.redis, r.db, scManager))
+	r.bot.Use(middleware.AuthMiddleware(r.redis, r.db, scManager))
 
-	r.bot.Handle("/help", commands.Help)
+	r.bot.Handle(tele.OnText, commands.Help)
+	r.bot.Handle(tele.OnContact, commands.Help)
 }

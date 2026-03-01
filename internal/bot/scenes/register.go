@@ -50,16 +50,12 @@ func (s *RegisterScene) Start(c tele.Context) error {
 	s.step[uid] = stepAskName
 	s.mu.Unlock()
 
-	log.Printf("RegisterScene.Start: user=%d step=AskName", uid)
-
 	return c.Send("Ro'yxatdan o'tish.\nIsmingizni kiriting (masalan: Axror):\n/cancel - bekor qilish")
 }
 
 func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 	uid := c.Sender().ID
 	text := strings.TrimSpace(c.Text())
-
-	log.Printf("RegisterScene.Handle: user=%d text=%q", uid, text)
 
 	if strings.EqualFold(text, "/cancel") {
 		s.cleanup(uid)
@@ -70,6 +66,9 @@ func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 	s.mu.RLock()
 	st, ok := s.step[uid]
 	s.mu.RUnlock()
+
+	log.Printf("handle %d, Ask name step - %d, %t", st, stepAskName, ok)
+
 	if !ok {
 		// Scene start qilinmagan bo'lishi mumkin
 		return true, nil
