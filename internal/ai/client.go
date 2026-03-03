@@ -50,6 +50,11 @@ func (c *Client) AudioURIToVector(ctx context.Context, uri string) ([]float64, e
 	return c.requestVector(ctx, "/vector/audio", payload)
 }
 
+func (c *Client) ImageURIToVector(ctx context.Context, uri string) ([]float64, error) {
+	payload := map[string]string{"uri": uri}
+	return c.requestVector(ctx, "/vector/image", payload)
+}
+
 func (c *Client) requestVector(ctx context.Context, path string, payload any) ([]float64, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {

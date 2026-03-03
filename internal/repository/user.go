@@ -11,6 +11,7 @@ type User struct {
 	Username sql.NullString
 	FullName sql.NullString
 	Phone    sql.NullString
+	Role     string
 }
 
 type UsersRepo struct {

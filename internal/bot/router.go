@@ -1,11 +1,13 @@
 package bot
 
 import (
+	"context"
 	"database/sql"
 	"log"
+	"strings"
+	"time"
 	"yphx-bot/internal/ai"
 	"yphx-bot/internal/bot/commands"
-	"yphx-bot/internal/bot/handlers"
 	"yphx-bot/internal/bot/middleware"
 	"yphx-bot/internal/bot/scenes"
 	"yphx-bot/internal/repository"
@@ -27,37 +29,56 @@ func NewRouter(bot *Bot, redis *redis.Client, db *sql.DB) *Router {
 
 func (r *Router) SetupRoutes() {
 	scManager := scenes.NewManager()
+	userRepo := repository.NewUsersRepo(r.db)
+	vectorRepo := repository.NewVectorsRepo(r.db)
+
 	aiClient, err := ai.NewClient(r.aiBaseURL)
-	var vectorHandlers *handlers.VectorHandlers
+	var searchScene *scenes.SearchScene
 	if err != nil {
 		log.Printf("AI client init failed: %v", err)
 	} else {
-		vectorHandlers = handlers.NewVectorHandlers(aiClient, repository.NewVectorsRepo(r.db))
+		searchScene = scenes.NewSearchScene(aiClient, vectorRepo)
 	}
 
 	r.bot.Use(middleware.SceneMiddleware(r.redis, r.db, scManager))
 	r.bot.Use(middleware.AuthMiddleware(r.redis, r.db, scManager))
 
-	r.bot.Handle("/start", commands.Help)
+	r.bot.Handle("/start", func(c tele.Context) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		exists, err := userRepo.ExistsByTgUserID(ctx, c.Sender().ID)
+		if err != nil {
+			return c.Send("Internal error. Please try again later.")
+		}
+		if !exists {
+			register := scenes.NewRegisterScene(userRepo)
+			scManager.Set(c.Sender().ID, register)
+			return register.Start(c)
+		}
+
+		markup := &tele.ReplyMarkup{
+			ResizeKeyboard: true,
+			ReplyKeyboard: [][]tele.ReplyButton{
+				{{Text: scenes.SearchButtonText}},
+			},
+		}
+		return c.Send("Kerakli tugmani tanlang:", markup)
+	})
 	r.bot.Handle("/help", commands.Help)
 	r.bot.Handle(tele.OnText, func(c tele.Context) error {
-		if vectorHandlers == nil {
-			return c.Send("AI service sozlanmagan.")
+		if strings.TrimSpace(c.Text()) == scenes.SearchButtonText {
+			if searchScene == nil {
+				return c.Send("AI service sozlanmagan.")
+			}
+			scManager.Set(c.Sender().ID, searchScene)
+			return searchScene.Start(c)
 		}
-		return vectorHandlers.HandleText(c)
+		return c.Send("/start ni bosing va Search tugmasini tanlang.")
 	})
-	// r.bot.Handle(tele.OnAudio, func(c tele.Context) error {
-	// 	if vectorHandlers == nil {
-	// 		return c.Send("AI service sozlanmagan.")
-	// 	}
-	// 	return vectorHandlers.HandleAudio(c)
-	// })
-	// r.bot.Handle(tele.OnVoice, func(c tele.Context) error {
-	// 	if vectorHandlers == nil {
-	// 		return c.Send("AI service sozlanmagan.")
-	// 	}
-	// 	return vectorHandlers.HandleAudio(c)
-	// })
+	r.bot.Handle(tele.OnPhoto, func(c tele.Context) error {
+		return c.Send("/start ni bosing va Search tugmasini tanlang.")
+	})
 	r.bot.Handle(tele.OnContact, commands.Help)
 	r.bot.Handle(tele.OnCallback, func(c tele.Context) error {
 		return c.Respond()

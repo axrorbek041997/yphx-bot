@@ -13,10 +13,13 @@ func SceneMiddleware(redis *redis.Client, db *sql.DB, scene *scenes.Manager) tel
 		return func(c tele.Context) error {
 			uid := c.Sender().ID
 
-			scene, ok := scene.Get(uid)
+			activeScene, ok := scene.Get(uid)
 			if ok {
-				scene.Handle(c)
-				return nil
+				done, err := activeScene.Handle(c)
+				if done {
+					scene.Clear(uid)
+				}
+				return err
 			}
 
 			return next(c)

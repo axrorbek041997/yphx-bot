@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+type VectorSearchResult struct {
+	ID       int64
+	Text     sql.NullString
+	ImageURL sql.NullString
+	Type     string
+	Score    float64
+}
+
 type VectorsRepo struct {
 	db *sql.DB
 }
@@ -27,6 +35,35 @@ func (r *VectorsRepo) Save(ctx context.Context, typ, text, imageURL string, vect
 	}
 
 	return nil
+}
+
+func (r *VectorsRepo) SearchSimilar(ctx context.Context, typ string, queryVector []float64, limit int) ([]VectorSearchResult, error) {
+	vectorLiteral := toPgVectorLiteral(queryVector)
+	rows, err := r.db.QueryContext(ctx, `
+		select id, text, image_url, type, 1 - (vector <=> $1::vector) as score
+		from vectors
+		where type = $2
+		order by vector <=> $1::vector
+		limit $3
+	`, vectorLiteral, typ, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search vectors: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]VectorSearchResult, 0, limit)
+	for rows.Next() {
+		var row VectorSearchResult
+		if err := rows.Scan(&row.ID, &row.Text, &row.ImageURL, &row.Type, &row.Score); err != nil {
+			return nil, fmt.Errorf("scan vectors: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vectors: %w", err)
+	}
+
+	return out, nil
 }
 
 func toPgVectorLiteral(vector []float64) string {
