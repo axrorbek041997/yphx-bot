@@ -55,6 +55,7 @@ func (s *RegisterScene) Start(c tele.Context) error {
 func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 	uid := c.Sender().ID
 	text := strings.TrimSpace(c.Text())
+	callback := c.Callback()
 
 	if strings.EqualFold(text, "/cancel") {
 		s.cleanup(uid)
@@ -93,7 +94,7 @@ func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 
 	case stepAskPhone:
 		if c.Message().Contact == nil {
-			return false, c.Send("Telefon formati noto'g'ri. Masalan: +998901234567")
+			return false, c.Send("Telefon raqamingizni pastdagi tugma orqali ulashing:")
 		}
 
 		s.mu.Lock()
@@ -103,18 +104,31 @@ func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 		phone := s.phone[uid]
 		s.mu.Unlock()
 
-		msg := fmt.Sprintf("Tasdiqlaysizmi?\nIsm: %s\nTelefon: %s\n\nHa bo'lsa: yes\nYo'q bo'lsa: no", name, phone)
-		return false, c.Send(msg)
+		msg := fmt.Sprintf("Tasdiqlaysizmi?\nIsm: %s\nTelefon: %s", name, phone)
+		markup := &tele.ReplyMarkup{
+			InlineKeyboard: [][]tele.InlineButton{
+				{
+					{Text: "✅ Ha", Data: "register_yes"},
+					{Text: "❌ Yo'q", Data: "register_no"},
+				},
+			},
+		}
+		return false, c.Send(msg, markup)
 
 	case stepConfirm:
-		ans := strings.ToLower(text)
-		if ans == "no" || ans == "yo'q" || ans == "yq" {
+		if callback != nil {
+			_ = c.Respond()
+			text = callback.Data
+		}
+
+		ans := strings.ToLower(strings.TrimSpace(text))
+		if ans == "register_no" || ans == "no" || ans == "yo'q" || ans == "yq" {
 			s.cleanup(uid)
 			_ = c.Send("Bekor qilindi ✅ /register bilan qayta boshlang.")
 			return true, nil
 		}
-		if ans != "yes" && ans != "ha" && ans != "ok" {
-			return false, c.Send("Iltimos, 'yes' yoki 'no' deb yozing.")
+		if ans != "register_yes" && ans != "yes" && ans != "ha" && ans != "ok" {
+			return false, c.Send("Iltimos, tugmadan tanlang: ✅ Ha yoki ❌ Yo'q.")
 		}
 
 		s.mu.RLock()

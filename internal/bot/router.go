@@ -28,4 +28,7 @@ func (r *Router) SetupRoutes() {
 
 	r.bot.Handle(tele.OnText, commands.Help)
 	r.bot.Handle(tele.OnContact, commands.Help)
+	r.bot.Handle(tele.OnCallback, func(c tele.Context) error {
+		return c.Respond()
+	})
 }
