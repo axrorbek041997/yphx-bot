@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -61,7 +60,6 @@ func (c *Client) requestVector(ctx context.Context, path string, payload any) ([
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	log.Printf("Requesting vector from AI tool at %s", c.baseURL+path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)

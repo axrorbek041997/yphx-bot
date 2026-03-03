@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 type User struct {
@@ -40,4 +41,25 @@ func (r *UsersRepo) UpsertRegister(ctx context.Context, tgUserID int64, username
 		  phone = excluded.phone
 	`, tgUserID, username, fullName, phone)
 	return err
+}
+
+func (r *UsersRepo) ListAdminTgIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `select tg_id from users where role = 'admin'`)
+	if err != nil {
+		return nil, fmt.Errorf("query admins: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan admin id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admin ids: %w", err)
+	}
+	return out, nil
 }

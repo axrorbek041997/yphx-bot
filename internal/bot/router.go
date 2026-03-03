@@ -31,13 +31,14 @@ func (r *Router) SetupRoutes() {
 	scManager := scenes.NewManager()
 	userRepo := repository.NewUsersRepo(r.db)
 	vectorRepo := repository.NewVectorsRepo(r.db)
+	searchLogRepo := repository.NewSearchLogsRepo(r.db)
 
 	aiClient, err := ai.NewClient(r.aiBaseURL)
 	var searchScene *scenes.SearchScene
 	if err != nil {
 		log.Printf("AI client init failed: %v", err)
 	} else {
-		searchScene = scenes.NewSearchScene(aiClient, vectorRepo)
+		searchScene = scenes.NewSearchScene(aiClient, vectorRepo, searchLogRepo, userRepo)
 	}
 
 	r.bot.Use(middleware.SceneMiddleware(r.redis, r.db, scManager))
@@ -81,6 +82,12 @@ func (r *Router) SetupRoutes() {
 	})
 	r.bot.Handle(tele.OnContact, commands.Help)
 	r.bot.Handle(tele.OnCallback, func(c tele.Context) error {
+		if cb := c.Callback(); cb != nil && strings.HasPrefix(cb.Data, "search_react:") {
+			if searchScene == nil {
+				return c.Respond()
+			}
+			return searchScene.HandleReactionCallback(c)
+		}
 		return c.Respond()
 	})
 }
