@@ -24,7 +24,8 @@ func Load() (*Config, error) {
 			Env: getEnv("APP_ENV", "dev"),
 		},
 		Bot: BotConfig{
-			Token: mustEnv("BOT_TOKEN"),
+			Token:         mustEnv("BOT_TOKEN"),
+			AIToolBaseURL: mustEnv("AI_TOOL_BASE_URL"),
 		},
 		DB: DatabaseConfig{
 			DSN:          mustEnv("DB_DSN"),
@@ -49,6 +50,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	if c.Bot.Token == "" {
 		return fmt.Errorf("BOT_TOKEN is required")
+	}
+	if c.Bot.AIToolBaseURL == "" {
+		return fmt.Errorf("AI_TOOL_BASE_URL is required")
 	}
 	if c.DB.DSN == "" {
 		return fmt.Errorf("DB_DSN is required")

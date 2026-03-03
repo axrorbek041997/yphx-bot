@@ -1,7 +1,7 @@
 services:
   postgres:
     container_name: yphx_pg
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     ports:
       - "${DB_PORT}:5432"
     environment:

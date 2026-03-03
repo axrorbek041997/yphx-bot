@@ -14,14 +14,8 @@ import (
 func AuthMiddleware(redis *redis.Client, db *sql.DB, scene *scenes.Manager) tele.MiddlewareFunc {
 	return func(next tele.HandlerFunc) tele.HandlerFunc {
 		return func(c tele.Context) error {
-			// allow /start always
-			if c.Text() == "/start" {
-				return next(c)
-			}
-
 			uid := c.Sender().ID
 
-			log.Print("Register middleware")
 			ctx, cancel := utils.RedisCtx()
 			defer cancel()
 

@@ -3,7 +3,8 @@ package config
 import "time"
 
 type BotConfig struct {
-	Token string
+	Token         string
+	AIToolBaseURL string
 
 	Mode  string // "polling" yoki "webhook"
 	Debug bool
