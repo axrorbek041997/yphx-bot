@@ -3,7 +3,6 @@ package scenes
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -67,8 +66,6 @@ func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 	st, ok := s.step[uid]
 	s.mu.RUnlock()
 
-	log.Printf("handle %d, Ask name step - %d, %t", st, stepAskName, ok)
-
 	if !ok {
 		// Scene start qilinmagan bo'lishi mumkin
 		return true, nil
@@ -84,15 +81,23 @@ func (s *RegisterScene) Handle(c tele.Context) (done bool, err error) {
 		s.step[uid] = stepAskPhone
 		s.mu.Unlock()
 
-		return false, c.Send("Telefon raqamingizni kiriting (masalan: +998901234567):")
+		return false, c.Send("Telefon raqamingizni ulashing.", &tele.ReplyMarkup{
+			ResizeKeyboard:  true,
+			OneTimeKeyboard: true,
+			ReplyKeyboard: [][]tele.ReplyButton{
+				{
+					{Text: "📱 Telefonni ulash", Contact: true},
+				},
+			},
+		})
 
 	case stepAskPhone:
-		if !looksLikePhone(text) {
+		if c.Message().Contact == nil {
 			return false, c.Send("Telefon formati noto'g'ri. Masalan: +998901234567")
 		}
 
 		s.mu.Lock()
-		s.phone[uid] = text
+		s.phone[uid] = c.Message().Contact.PhoneNumber
 		s.step[uid] = stepConfirm
 		name := s.name[uid]
 		phone := s.phone[uid]
