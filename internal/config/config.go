@@ -26,6 +26,7 @@ func Load() (*Config, error) {
 		Bot: BotConfig{
 			Token:         mustEnv("BOT_TOKEN"),
 			AIToolBaseURL: mustEnv("AI_TOOL_BASE_URL"),
+			FilesDir:      mustEnv("FILES_DIR"),
 		},
 		DB: DatabaseConfig{
 			DSN:          mustEnv("DB_DSN"),
@@ -53,6 +54,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Bot.AIToolBaseURL == "" {
 		return fmt.Errorf("AI_TOOL_BASE_URL is required")
+	}
+	if c.Bot.FilesDir == "" {
+		return fmt.Errorf("FILES_DIR is required")
 	}
 	if c.DB.DSN == "" {
 		return fmt.Errorf("DB_DSN is required")

@@ -2,7 +2,10 @@ package scenes
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"yphx-bot/internal/repository"
@@ -13,12 +16,13 @@ import (
 const AddVectorButtonText = "➕ Add Vector"
 
 type AddVectorScene struct {
-	ai      vectorClient
-	vectors *repository.VectorsRepo
+	ai       vectorClient
+	vectors  *repository.VectorsRepo
+	filesDir string
 }
 
-func NewAddVectorScene(ai vectorClient, vectors *repository.VectorsRepo) *AddVectorScene {
-	return &AddVectorScene{ai: ai, vectors: vectors}
+func NewAddVectorScene(ai vectorClient, vectors *repository.VectorsRepo, filesDir string) *AddVectorScene {
+	return &AddVectorScene{ai: ai, vectors: vectors, filesDir: filesDir}
 }
 
 func (s *AddVectorScene) Start(c tele.Context) error {
@@ -39,14 +43,13 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 	defer cancel()
 
 	if msg.Photo != nil {
-		imageURL, err := resolveTelegramFileURL(c, msg.Photo.FileID)
-		if err != nil {
-			return false, c.Send("Rasm URL olishda xatolik.")
-		}
-
 		fileBytes, fileName, err := downloadTelegramFileBytes(c, msg.Photo.FileID)
 		if err != nil {
 			return false, c.Send("Rasm faylini yuklashda xatolik.")
+		}
+		localImagePath, err := s.saveImageLocally(fileName, fileBytes)
+		if err != nil {
+			return false, c.Send("Rasmni local saqlashda xatolik.")
 		}
 
 		imageVector, err := s.ai.ImageUploadToVector(ctx, fileName, fileBytes)
@@ -64,7 +67,7 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 			}
 		}
 
-		if err := s.vectors.SaveImage(ctx, caption, imageURL, imageVector, textVector); err != nil {
+		if err := s.vectors.SaveImage(ctx, caption, localImagePath, imageVector, textVector); err != nil {
 			return false, c.Send("Image vector saqlashda xatolik.")
 		}
 		return true, c.Send("Image vector saqlandi.")
@@ -83,4 +86,20 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 		return false, c.Send("Text vector saqlashda xatolik.")
 	}
 	return true, c.Send("Text vector saqlandi.")
+}
+
+func (s *AddVectorScene) saveImageLocally(fileName string, data []byte) (string, error) {
+	if err := os.MkdirAll(s.filesDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir files dir: %w", err)
+	}
+
+	base := filepath.Base(fileName)
+	if base == "" || base == "." {
+		base = fmt.Sprintf("image_%d.bin", time.Now().UnixNano())
+	}
+	localPath := filepath.Join(s.filesDir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), base))
+	if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write image file: %w", err)
+	}
+	return localPath, nil
 }

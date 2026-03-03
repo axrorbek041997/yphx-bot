@@ -5,6 +5,7 @@ import "time"
 type BotConfig struct {
 	Token         string
 	AIToolBaseURL string
+	FilesDir      string
 
 	Mode  string // "polling" yoki "webhook"
 	Debug bool

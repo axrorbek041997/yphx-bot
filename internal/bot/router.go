@@ -21,10 +21,17 @@ type Router struct {
 	redis     *redis.Client
 	db        *sql.DB
 	aiBaseURL string
+	filesDir  string
 }
 
 func NewRouter(bot *Bot, redis *redis.Client, db *sql.DB) *Router {
-	return &Router{bot: bot.bot, redis: redis, db: db, aiBaseURL: bot.cfg.AIToolBaseURL}
+	return &Router{
+		bot:       bot.bot,
+		redis:     redis,
+		db:        db,
+		aiBaseURL: bot.cfg.AIToolBaseURL,
+		filesDir:  bot.cfg.FilesDir,
+	}
 }
 
 func (r *Router) SetupRoutes() {
@@ -40,7 +47,7 @@ func (r *Router) SetupRoutes() {
 		log.Printf("AI client init failed: %v", err)
 	} else {
 		searchScene = scenes.NewSearchScene(aiClient, vectorRepo, searchLogRepo, userRepo)
-		addVectorScene = scenes.NewAddVectorScene(aiClient, vectorRepo)
+		addVectorScene = scenes.NewAddVectorScene(aiClient, vectorRepo, r.filesDir)
 	}
 
 	r.bot.Use(middleware.SceneMiddleware(r.redis, r.db, scManager))
@@ -118,6 +125,12 @@ func (r *Router) SetupRoutes() {
 				return c.Respond()
 			}
 			return searchScene.HandleReactionCallback(c)
+		}
+		if cb := c.Callback(); cb != nil && strings.HasPrefix(cb.Data, "search_page:") {
+			if searchScene == nil {
+				return c.Respond()
+			}
+			return searchScene.HandlePageCallback(c)
 		}
 		return c.Respond()
 	})

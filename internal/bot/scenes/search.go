@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"yphx-bot/internal/repository"
 
@@ -15,6 +17,7 @@ import (
 )
 
 const SearchButtonText = "🔎 Search"
+const defaultSimilarityThreshold = 0.7
 
 type vectorClient interface {
 	TextToVector(ctx context.Context, text string) ([]float64, error)
@@ -27,10 +30,18 @@ type SearchScene struct {
 	vectors    *repository.VectorsRepo
 	searchLogs *repository.SearchLogsRepo
 	users      *repository.UsersRepo
+	mu         sync.RWMutex
+	pages      map[int64][]repository.VectorSearchResult // key: search_log_id
 }
 
 func NewSearchScene(ai vectorClient, vectors *repository.VectorsRepo, searchLogs *repository.SearchLogsRepo, users *repository.UsersRepo) *SearchScene {
-	return &SearchScene{ai: ai, vectors: vectors, searchLogs: searchLogs, users: users}
+	return &SearchScene{
+		ai:         ai,
+		vectors:    vectors,
+		searchLogs: searchLogs,
+		users:      users,
+		pages:      make(map[int64][]repository.VectorSearchResult),
+	}
 }
 
 func (s *SearchScene) Start(c tele.Context) error {
@@ -40,6 +51,9 @@ func (s *SearchScene) Start(c tele.Context) error {
 func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 	if cb := c.Callback(); cb != nil && strings.HasPrefix(cb.Data, "search_react:") {
 		return false, s.handleReactionCallback(c)
+	}
+	if cb := c.Callback(); cb != nil && strings.HasPrefix(cb.Data, "search_page:") {
+		return false, s.handlePageCallback(c)
 	}
 
 	if strings.EqualFold(strings.TrimSpace(c.Text()), "/cancel") {
@@ -93,9 +107,9 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 
 	var rows []repository.VectorSearchResult
 	if queryType == "image" {
-		rows, err = s.vectors.SearchSimilarImage(ctx, vector, 5)
+		rows, err = s.vectors.SearchSimilarImage(ctx, vector, defaultSimilarityThreshold, 30)
 	} else {
-		rows, err = s.vectors.SearchSimilarText(ctx, vector, 5)
+		rows, err = s.vectors.SearchSimilarText(ctx, vector, defaultSimilarityThreshold, 30)
 	}
 	if err != nil {
 		_, _ = s.createIgnoredLog(c, queryType, strings.TrimSpace(c.Text()))
@@ -111,40 +125,30 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 		return true, c.Send("Mos natija topilmadi.")
 	}
 
-	var b strings.Builder
-	b.WriteString("Top matches:\n")
-	for i, row := range rows {
-		b.WriteString(fmt.Sprintf("%d) score=%.4f", i+1, row.Score))
-		if row.Text.Valid && row.Text.String != "" {
-			b.WriteString(" | text=" + row.Text.String)
-		}
-		if row.ImageURL.Valid && row.ImageURL.String != "" {
-			b.WriteString(" | image_url=" + row.ImageURL.String)
-		}
-		b.WriteString("\n")
-	}
-
-	resultText := strings.TrimSpace(b.String())
+	resultText := fmt.Sprintf(
+		"Top matches (score >= %.2f)\nFound: %d",
+		defaultSimilarityThreshold,
+		len(rows),
+	)
 	logID, err := s.createSuccessLog(c, queryType, resultText)
 	if err != nil {
 		log.Printf("create success log error: %v", err)
 		return true, c.Send(resultText)
 	}
 
-	markup := &tele.ReplyMarkup{
-		InlineKeyboard: [][]tele.InlineButton{
-			{
-				{Text: "👍 Like", Data: fmt.Sprintf("search_react:%d:like", logID)},
-				{Text: "👎 Dislike", Data: fmt.Sprintf("search_react:%d:dislike", logID)},
-			},
-		},
-	}
+	s.mu.Lock()
+	s.pages[logID] = rows
+	s.mu.Unlock()
 
-	return true, c.Send(resultText, markup)
+	return true, s.sendPage(c, logID, 0)
 }
 
 func (s *SearchScene) HandleReactionCallback(c tele.Context) error {
 	return s.handleReactionCallback(c)
+}
+
+func (s *SearchScene) HandlePageCallback(c tele.Context) error {
+	return s.handlePageCallback(c)
 }
 
 func (s *SearchScene) handleReactionCallback(c tele.Context) error {
@@ -178,6 +182,30 @@ func (s *SearchScene) handleReactionCallback(c tele.Context) error {
 	}
 
 	return c.Send("Fikringiz uchun rahmat.")
+}
+
+func (s *SearchScene) handlePageCallback(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	_ = c.Respond()
+
+	parts := strings.Split(cb.Data, ":")
+	if len(parts) != 3 || parts[0] != "search_page" {
+		return nil
+	}
+
+	logID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return c.Send("Pagination formati xato.")
+	}
+	page, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return c.Send("Pagination sahifa xato.")
+	}
+
+	return s.sendPage(c, logID, page)
 }
 
 func (s *SearchScene) createSuccessLog(c tele.Context, queryType, resultText string) (int64, error) {
@@ -272,6 +300,70 @@ func (s *SearchScene) notifyAdminsAboutNotFound(c tele.Context, logID int64, que
 			log.Printf("notify admin %d error: %v", adminID, err)
 		}
 	}
+}
+
+func (s *SearchScene) sendPage(c tele.Context, logID int64, page int) error {
+	s.mu.RLock()
+	rows, ok := s.pages[logID]
+	s.mu.RUnlock()
+	if !ok || len(rows) == 0 {
+		return c.Send("Pagination session topilmadi.")
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= len(rows) {
+		page = len(rows) - 1
+	}
+
+	row := rows[page]
+	textValue := ""
+	if row.Text.Valid {
+		textValue = strings.TrimSpace(row.Text.String)
+	}
+	if textValue == "" {
+		if row.Type == "image" {
+			textValue = "(caption yo'q)"
+		} else {
+			textValue = "(text yo'q)"
+		}
+	}
+
+	resultText := fmt.Sprintf(
+		"Result %d/%d\nType: %s\nScore: %.4f\nText: %s",
+		page+1, len(rows), row.Type, row.Score, textValue,
+	)
+
+	buttons := make([][]tele.InlineButton, 0, 4)
+	if page > 0 {
+		buttons = append(buttons, []tele.InlineButton{
+			{Text: "⬅️ Prev", Data: fmt.Sprintf("search_page:%d:%d", logID, page-1)},
+		})
+	}
+	if page < len(rows)-1 {
+		buttons = append(buttons, []tele.InlineButton{
+			{Text: "➡️ Next", Data: fmt.Sprintf("search_page:%d:%d", logID, page+1)},
+		})
+	}
+	buttons = append(buttons, []tele.InlineButton{
+		{Text: "👍 Like", Data: fmt.Sprintf("search_react:%d:like", logID)},
+	})
+	buttons = append(buttons, []tele.InlineButton{
+		{Text: "👎 Dislike", Data: fmt.Sprintf("search_react:%d:dislike", logID)},
+	})
+
+	markup := &tele.ReplyMarkup{InlineKeyboard: buttons}
+	if row.Type == "image" && row.ImageURL.Valid && strings.TrimSpace(row.ImageURL.String) != "" {
+		imagePath := strings.TrimSpace(row.ImageURL.String)
+		if st, err := os.Stat(imagePath); err == nil && !st.IsDir() {
+			return c.Send(&tele.Photo{
+				File:    tele.FromDisk(imagePath),
+				Caption: resultText,
+			}, markup)
+		}
+	}
+
+	return c.Send(resultText, markup)
 }
 
 func resolveTelegramFileURL(c tele.Context, fileID string) (string, error) {

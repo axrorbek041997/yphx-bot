@@ -53,15 +53,17 @@ func (r *VectorsRepo) SaveImage(ctx context.Context, text, imageURL string, imag
 	return nil
 }
 
-func (r *VectorsRepo) SearchSimilarText(ctx context.Context, queryVector []float64, limit int) ([]VectorSearchResult, error) {
+func (r *VectorsRepo) SearchSimilarText(ctx context.Context, queryVector []float64, threshold float64, limit int) ([]VectorSearchResult, error) {
 	vectorLiteral := toPgVectorLiteral(queryVector)
 	rows, err := r.db.QueryContext(ctx, `
 		select id, text, image_url, type, 1 - (text_vector <=> $1::vector) as score
 		from vectors
-		where type = 'text' and text_vector is not null
+		where type = 'text'
+		  and text_vector is not null
+		  and (1 - (text_vector <=> $1::vector)) >= $2
 		order by text_vector <=> $1::vector
-		limit $2
-	`, vectorLiteral, limit)
+		limit $3
+	`, vectorLiteral, threshold, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search text vectors: %w", err)
 	}
@@ -82,15 +84,17 @@ func (r *VectorsRepo) SearchSimilarText(ctx context.Context, queryVector []float
 	return out, nil
 }
 
-func (r *VectorsRepo) SearchSimilarImage(ctx context.Context, queryVector []float64, limit int) ([]VectorSearchResult, error) {
+func (r *VectorsRepo) SearchSimilarImage(ctx context.Context, queryVector []float64, threshold float64, limit int) ([]VectorSearchResult, error) {
 	vectorLiteral := toPgVectorLiteral(queryVector)
 	rows, err := r.db.QueryContext(ctx, `
 		select id, text, image_url, type, 1 - (image_vector <=> $1::vector) as score
 		from vectors
-		where type = 'image' and image_vector is not null
+		where type = 'image'
+		  and image_vector is not null
+		  and (1 - (image_vector <=> $1::vector)) >= $2
 		order by image_vector <=> $1::vector
-		limit $2
-	`, vectorLiteral, limit)
+		limit $3
+	`, vectorLiteral, threshold, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search image vectors: %w", err)
 	}
