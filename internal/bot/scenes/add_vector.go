@@ -2,6 +2,8 @@ package scenes
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -67,8 +69,13 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 			}
 		}
 
-		if err := s.vectors.SaveImage(ctx, caption, localImagePath, imageVector, textVector); err != nil {
+		imageHash := hashBytes(fileBytes)
+		saved, err := s.vectors.SaveImage(ctx, caption, localImagePath, imageHash, imageVector, textVector)
+		if err != nil {
 			return false, c.Send("Image vector saqlashda xatolik.")
+		}
+		if !saved {
+			return true, c.Send("Bu rasm allaqachon mavjud (duplicate).")
 		}
 		return true, c.Send("Image vector saqlandi.")
 	}
@@ -82,8 +89,12 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 	if err != nil {
 		return false, c.Send("Matn vector olishda xatolik.")
 	}
-	if err := s.vectors.SaveText(ctx, text, textVector); err != nil {
+	saved, err := s.vectors.SaveText(ctx, text, textVector)
+	if err != nil {
 		return false, c.Send("Text vector saqlashda xatolik.")
+	}
+	if !saved {
+		return true, c.Send("Bu text allaqachon mavjud (duplicate).")
 	}
 	return true, c.Send("Text vector saqlandi.")
 }
@@ -102,4 +113,9 @@ func (s *AddVectorScene) saveImageLocally(fileName string, data []byte) (string,
 		return "", fmt.Errorf("write image file: %w", err)
 	}
 	return localPath, nil
+}
+
+func hashBytes(data []byte) string {
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
 }

@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,33 +26,51 @@ func NewVectorsRepo(db *sql.DB) *VectorsRepo {
 	return &VectorsRepo{db: db}
 }
 
-func (r *VectorsRepo) SaveText(ctx context.Context, text string, textVector []float64) error {
+func (r *VectorsRepo) SaveText(ctx context.Context, text string, textVector []float64) (bool, error) {
+	normText := normalizeText(text)
+	textHash := hashString(normText)
 	vectorLiteral := toPgVectorLiteral(textVector)
-	_, err := r.db.ExecContext(ctx, `
-		insert into vectors (type, text, text_vector, vector)
-		values ('text', nullif($1, ''), $2::vector, $2::vector)
-	`, text, vectorLiteral)
+	res, err := r.db.ExecContext(ctx, `
+		insert into vectors (type, text, text_norm, text_hash, text_vector, vector)
+		values ('text', nullif($1, ''), nullif($2, ''), nullif($3, ''), $4::vector, $4::vector)
+		on conflict do nothing
+	`, text, normText, textHash, vectorLiteral)
 	if err != nil {
-		return fmt.Errorf("insert text vector: %w", err)
+		return false, fmt.Errorf("insert text vector: %w", err)
 	}
-	return nil
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("text rows affected: %w", err)
+	}
+	return affected > 0, nil
 }
 
-func (r *VectorsRepo) SaveImage(ctx context.Context, text, imageURL string, imageVector []float64, textVector []float64) error {
+func (r *VectorsRepo) SaveImage(ctx context.Context, text, imageURL, imageHash string, imageVector []float64, textVector []float64) (bool, error) {
+	normText := normalizeText(text)
+	textHash := hashString(normText)
+	if strings.TrimSpace(imageHash) == "" {
+		imageHash = hashString(strings.TrimSpace(imageURL))
+	}
+
 	imageVectorLiteral := toPgVectorLiteral(imageVector)
 	var textVectorArg any
 	if len(textVector) > 0 {
 		textVectorArg = toPgVectorLiteral(textVector)
 	}
 
-	_, err := r.db.ExecContext(ctx, `
-		insert into vectors (type, text, image_url, image_vector, text_vector, vector)
-		values ('image', nullif($1, ''), nullif($2, ''), $3::vector, $4::vector, $3::vector)
-	`, text, imageURL, imageVectorLiteral, textVectorArg)
+	res, err := r.db.ExecContext(ctx, `
+		insert into vectors (type, text, text_norm, text_hash, image_url, image_hash, image_vector, text_vector, vector)
+		values ('image', nullif($1, ''), nullif($2, ''), nullif($3, ''), nullif($4, ''), nullif($5, ''), $6::vector, $7::vector, $6::vector)
+		on conflict do nothing
+	`, text, normText, textHash, imageURL, imageHash, imageVectorLiteral, textVectorArg)
 	if err != nil {
-		return fmt.Errorf("insert image vector: %w", err)
+		return false, fmt.Errorf("insert image vector: %w", err)
 	}
-	return nil
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("image rows affected: %w", err)
+	}
+	return affected > 0, nil
 }
 
 func (r *VectorsRepo) SearchSimilarText(ctx context.Context, queryVector []float64, threshold float64, limit int) ([]VectorSearchResult, error) {
@@ -121,4 +141,14 @@ func toPgVectorLiteral(vector []float64) string {
 		parts = append(parts, strconv.FormatFloat(v, 'f', -1, 64))
 	}
 	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func normalizeText(text string) string {
+	parts := strings.Fields(strings.ToLower(strings.TrimSpace(text)))
+	return strings.Join(parts, " ")
+}
+
+func hashString(input string) string {
+	sum := md5.Sum([]byte(input))
+	return hex.EncodeToString(sum[:])
 }
