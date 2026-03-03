@@ -3,7 +3,9 @@ package scenes
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ const SearchButtonText = "🔎 Search"
 type vectorClient interface {
 	TextToVector(ctx context.Context, text string) ([]float64, error)
 	ImageURIToVector(ctx context.Context, uri string) ([]float64, error)
+	ImageUploadToVector(ctx context.Context, fileName string, data []byte) ([]float64, error)
 }
 
 type SearchScene struct {
@@ -63,7 +66,12 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 			_, _ = s.createIgnoredLog(c, "image", "")
 			return false, c.Send("Rasm URL olishda xatolik.")
 		}
-		vector, err = s.ai.ImageURIToVector(ctx, imageURL)
+		fileBytes, fileName, err := downloadTelegramFileBytes(c, msg.Photo.FileID)
+		if err != nil {
+			_, _ = s.createIgnoredLog(c, "image", imageURL)
+			return false, c.Send("Rasm faylini yuklashda xatolik.")
+		}
+		vector, err = s.ai.ImageUploadToVector(ctx, fileName, fileBytes)
 		if err != nil {
 			_, _ = s.createIgnoredLog(c, "image", imageURL)
 			return false, c.Send("Rasmni vector qilishda xatolik.")
@@ -83,7 +91,12 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 		queryType = "text"
 	}
 
-	rows, err := s.vectors.SearchSimilar(ctx, queryType, vector, 5)
+	var rows []repository.VectorSearchResult
+	if queryType == "image" {
+		rows, err = s.vectors.SearchSimilarImage(ctx, vector, 5)
+	} else {
+		rows, err = s.vectors.SearchSimilarText(ctx, vector, 5)
+	}
 	if err != nil {
 		_, _ = s.createIgnoredLog(c, queryType, strings.TrimSpace(c.Text()))
 		return false, c.Send("Similarity qidiruvda xatolik.")
@@ -95,7 +108,7 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 		} else {
 			s.notifyAdminsAboutNotFound(c, logID, queryType)
 		}
-		return false, c.Send("Mos natija topilmadi.")
+		return true, c.Send("Mos natija topilmadi.")
 	}
 
 	var b strings.Builder
@@ -115,7 +128,7 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 	logID, err := s.createSuccessLog(c, queryType, resultText)
 	if err != nil {
 		log.Printf("create success log error: %v", err)
-		return false, c.Send(resultText)
+		return true, c.Send(resultText)
 	}
 
 	markup := &tele.ReplyMarkup{
@@ -127,7 +140,7 @@ func (s *SearchScene) Handle(c tele.Context) (done bool, err error) {
 		},
 	}
 
-	return false, c.Send(resultText, markup)
+	return true, c.Send(resultText, markup)
 }
 
 func (s *SearchScene) HandleReactionCallback(c tele.Context) error {
@@ -276,4 +289,28 @@ func resolveTelegramFileURL(c tele.Context, fileID string) (string, error) {
 		c.Bot().Token,
 		strings.TrimLeft(file.FilePath, "/"),
 	), nil
+}
+
+func downloadTelegramFileBytes(c tele.Context, fileID string) ([]byte, string, error) {
+	fileMeta, err := c.Bot().FileByID(fileID)
+	if err != nil {
+		return nil, "", fmt.Errorf("get file meta: %w", err)
+	}
+
+	reader, err := c.Bot().File(&tele.File{FileID: fileID})
+	if err != nil {
+		return nil, "", fmt.Errorf("download file: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(io.LimitReader(reader, 20<<20))
+	if err != nil {
+		return nil, "", fmt.Errorf("read file bytes: %w", err)
+	}
+
+	fileName := filepath.Base(fileMeta.FilePath)
+	if fileName == "" || fileName == "." {
+		fileName = fileID + ".bin"
+	}
+	return data, fileName, nil
 }

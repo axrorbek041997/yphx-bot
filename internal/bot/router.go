@@ -35,10 +35,12 @@ func (r *Router) SetupRoutes() {
 
 	aiClient, err := ai.NewClient(r.aiBaseURL)
 	var searchScene *scenes.SearchScene
+	var addVectorScene *scenes.AddVectorScene
 	if err != nil {
 		log.Printf("AI client init failed: %v", err)
 	} else {
 		searchScene = scenes.NewSearchScene(aiClient, vectorRepo, searchLogRepo, userRepo)
+		addVectorScene = scenes.NewAddVectorScene(aiClient, vectorRepo)
 	}
 
 	r.bot.Use(middleware.SceneMiddleware(r.redis, r.db, scManager))
@@ -58,22 +60,51 @@ func (r *Router) SetupRoutes() {
 			return register.Start(c)
 		}
 
+		role, err := userRepo.GetRoleByTgUserID(ctx, c.Sender().ID)
+		if err != nil {
+			return c.Send("Internal error. Please try again later.")
+		}
+
 		markup := &tele.ReplyMarkup{
 			ResizeKeyboard: true,
 			ReplyKeyboard: [][]tele.ReplyButton{
 				{{Text: scenes.SearchButtonText}},
 			},
 		}
+		if role == "admin" {
+			markup.ReplyKeyboard = [][]tele.ReplyButton{
+				{{Text: scenes.SearchButtonText}, {Text: scenes.AddVectorButtonText}},
+			}
+		}
 		return c.Send("Kerakli tugmani tanlang:", markup)
 	})
 	r.bot.Handle("/help", commands.Help)
 	r.bot.Handle(tele.OnText, func(c tele.Context) error {
-		if strings.TrimSpace(c.Text()) == scenes.SearchButtonText {
+		text := strings.TrimSpace(c.Text())
+		if text == scenes.SearchButtonText {
 			if searchScene == nil {
 				return c.Send("AI service sozlanmagan.")
 			}
 			scManager.Set(c.Sender().ID, searchScene)
 			return searchScene.Start(c)
+		}
+		if text == scenes.AddVectorButtonText {
+			if addVectorScene == nil {
+				return c.Send("AI service sozlanmagan.")
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			role, err := userRepo.GetRoleByTgUserID(ctx, c.Sender().ID)
+			if err != nil {
+				return c.Send("Internal error. Please try again later.")
+			}
+			if role != "admin" {
+				return c.Send("Faqat admin add vector qila oladi.")
+			}
+
+			scManager.Set(c.Sender().ID, addVectorScene)
+			return addVectorScene.Start(c)
 		}
 		return c.Send("/start ni bosing va Search tugmasini tanlang.")
 	})

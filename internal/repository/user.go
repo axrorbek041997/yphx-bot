@@ -63,3 +63,15 @@ func (r *UsersRepo) ListAdminTgIDs(ctx context.Context) ([]int64, error) {
 	}
 	return out, nil
 }
+
+func (r *UsersRepo) GetRoleByTgUserID(ctx context.Context, tgUserID int64) (string, error) {
+	var role string
+	err := r.db.QueryRowContext(ctx, `select role from users where tg_id = $1`, tgUserID).Scan(&role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("query role: %w", err)
+	}
+	return role, nil
+}

@@ -39,7 +39,7 @@ func (h *VectorHandlers) HandleText(c tele.Context) error {
 		return c.Send("Text vector olishda xatolik yuz berdi.")
 	}
 
-	if err := h.vectors.Save(ctx, "text", text, "", vector); err != nil {
+	if err := h.vectors.SaveText(ctx, text, vector); err != nil {
 		log.Printf("save text vector error: %v", err)
 		return c.Send("Vector saqlashda xatolik yuz berdi.")
 	}
@@ -78,7 +78,7 @@ func (h *VectorHandlers) HandleAudio(c tele.Context) error {
 		return c.Send("Audio vector olishda xatolik yuz berdi.")
 	}
 
-	if err := h.vectors.Save(ctx, "image", "", audioURI, vector); err != nil {
+	if err := h.vectors.SaveImage(ctx, "", audioURI, vector, nil); err != nil {
 		log.Printf("save audio vector error: %v", err)
 		return c.Send("Vector saqlashda xatolik yuz berdi.")
 	}
