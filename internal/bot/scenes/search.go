@@ -441,7 +441,7 @@ func (s *SearchScene) retryNotFound(c tele.Context, notFoundLog *repository.Sear
 	if textValue == "" {
 		textValue = "(caption/text yo'q)"
 	}
-	reply := fmt.Sprintf("Top result\nType: %s\nScore: %.4f\nText: %s", row.Type, row.Score, textValue)
+	reply := fmt.Sprintf(textValue)
 
 	if row.Type == "image" && row.ImageURL.Valid {
 		imagePath := strings.TrimSpace(row.ImageURL.String)
@@ -491,8 +491,8 @@ func (s *SearchScene) sendPage(c tele.Context, logID int64, page int) error {
 	}
 
 	resultText := fmt.Sprintf(
-		"Result %d/%d\nType: %s\nScore: %.4f\nText: %s",
-		page+1, len(rows), row.Type, row.Score, textValue,
+		"Result %d/%d\nText: %s",
+		page+1, len(rows), textValue,
 	)
 
 	buttons := make([][]tele.InlineButton, 0, 4)
