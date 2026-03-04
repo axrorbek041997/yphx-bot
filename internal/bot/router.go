@@ -87,6 +87,13 @@ func (r *Router) SetupRoutes() {
 	})
 	r.bot.Handle("/help", commands.Help)
 	r.bot.Handle(tele.OnText, func(c tele.Context) error {
+		if searchScene != nil {
+			handled, err := searchScene.HandlePendingAdminInfo(c)
+			if handled || err != nil {
+				return err
+			}
+		}
+
 		text := strings.TrimSpace(c.Text())
 		if text == scenes.SearchButtonText {
 			if searchScene == nil {
@@ -131,6 +138,12 @@ func (r *Router) SetupRoutes() {
 				return c.Respond()
 			}
 			return searchScene.HandlePageCallback(c)
+		}
+		if cb := c.Callback(); cb != nil && (strings.HasPrefix(cb.Data, "nf_retry:") || strings.HasPrefix(cb.Data, "nf_ignore:") || strings.HasPrefix(cb.Data, "nf_info:")) {
+			if searchScene == nil {
+				return c.Respond()
+			}
+			return searchScene.HandleAdminNotFoundCallback(c)
 		}
 		return c.Respond()
 	})

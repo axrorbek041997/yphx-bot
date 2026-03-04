@@ -13,6 +13,7 @@ const (
 )
 
 type SearchLog struct {
+	ID            int64
 	TgUserID      int64
 	QueryType     string
 	QueryText     string
@@ -54,4 +55,32 @@ func (r *SearchLogsRepo) SetReaction(ctx context.Context, logID, tgUserID int64,
 		return false, fmt.Errorf("reaction rows affected: %w", err)
 	}
 	return affected > 0, nil
+}
+
+func (r *SearchLogsRepo) GetByID(ctx context.Context, logID int64) (*SearchLog, error) {
+	var out SearchLog
+	err := r.db.QueryRowContext(ctx, `
+		select id, tg_user_id, query_type, coalesce(query_text, ''), coalesce(query_image_url, ''), coalesce(result_text, ''), status
+		from search_logs
+		where id = $1
+	`, logID).Scan(&out.ID, &out.TgUserID, &out.QueryType, &out.QueryText, &out.QueryImageURL, &out.ResultText, &out.Status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get search log: %w", err)
+	}
+	return &out, nil
+}
+
+func (r *SearchLogsRepo) SetStatus(ctx context.Context, logID int64, status string) error {
+	_, err := r.db.ExecContext(ctx, `
+		update search_logs
+		set status = $1, updated_at = now()
+		where id = $2
+	`, status, logID)
+	if err != nil {
+		return fmt.Errorf("update search status: %w", err)
+	}
+	return nil
 }

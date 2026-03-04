@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,6 +33,7 @@ type SearchScene struct {
 	users      *repository.UsersRepo
 	mu         sync.RWMutex
 	pages      map[int64][]repository.VectorSearchResult // key: search_log_id
+	adminInfo  map[int64]int64                           // key: admin_tg_user_id -> target_user_tg_user_id
 }
 
 func NewSearchScene(ai vectorClient, vectors *repository.VectorsRepo, searchLogs *repository.SearchLogsRepo, users *repository.UsersRepo) *SearchScene {
@@ -41,6 +43,7 @@ func NewSearchScene(ai vectorClient, vectors *repository.VectorsRepo, searchLogs
 		searchLogs: searchLogs,
 		users:      users,
 		pages:      make(map[int64][]repository.VectorSearchResult),
+		adminInfo:  make(map[int64]int64),
 	}
 }
 
@@ -149,6 +152,94 @@ func (s *SearchScene) HandleReactionCallback(c tele.Context) error {
 
 func (s *SearchScene) HandlePageCallback(c tele.Context) error {
 	return s.handlePageCallback(c)
+}
+
+func (s *SearchScene) HandleAdminNotFoundCallback(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	_ = c.Respond()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	role, err := s.users.GetRoleByTgUserID(ctx, c.Sender().ID)
+	if err != nil {
+		return c.Send("Admin tekshirishda xatolik.")
+	}
+	if role != "admin" {
+		return c.Send("Faqat admin bu amalni bajara oladi.")
+	}
+
+	parts := strings.Split(cb.Data, ":")
+	if len(parts) != 2 {
+		return c.Send("Noto'g'ri callback.")
+	}
+	logID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return c.Send("Noto'g'ri log id.")
+	}
+
+	notFoundLog, err := s.searchLogs.GetByID(ctx, logID)
+	if err != nil {
+		return c.Send("Log olishda xatolik.")
+	}
+	if notFoundLog == nil {
+		return c.Send("Log topilmadi.")
+	}
+
+	switch parts[0] {
+	case "nf_retry":
+		return s.retryNotFound(c, notFoundLog)
+	case "nf_ignore":
+		if err := s.searchLogs.SetStatus(ctx, logID, repository.SearchStatusIgnored); err != nil {
+			return c.Send("Statusni yangilashda xatolik.")
+		}
+		_, err := c.Bot().Send(&tele.User{ID: notFoundLog.TgUserID}, "Sizning so'rovingiz yo'l harakati qoidalariga mos deb topilmadi.")
+		if err != nil {
+			return c.Send("Userga xabar yuborib bo'lmadi.")
+		}
+		return c.Send("Ignore qilindi va userga xabar yuborildi.")
+	case "nf_info":
+		s.mu.Lock()
+		s.adminInfo[c.Sender().ID] = notFoundLog.TgUserID
+		s.mu.Unlock()
+		return c.Send("Userga yuboriladigan matnni yozing. Bekor qilish: /cancel")
+	default:
+		return c.Send("Noma'lum amal.")
+	}
+}
+
+func (s *SearchScene) HandlePendingAdminInfo(c tele.Context) (bool, error) {
+	adminID := c.Sender().ID
+
+	s.mu.RLock()
+	targetUserID, ok := s.adminInfo[adminID]
+	s.mu.RUnlock()
+	if !ok {
+		return false, nil
+	}
+
+	text := strings.TrimSpace(c.Text())
+	if strings.EqualFold(text, "/cancel") {
+		s.mu.Lock()
+		delete(s.adminInfo, adminID)
+		s.mu.Unlock()
+		return true, c.Send("Info yuborish bekor qilindi.")
+	}
+	if text == "" || strings.HasPrefix(text, "/") {
+		return true, c.Send("Iltimos, oddiy matn yuboring. Bekor qilish: /cancel")
+	}
+
+	_, err := c.Bot().Send(&tele.User{ID: targetUserID}, text)
+	if err != nil {
+		return true, c.Send("Userga info yuborishda xatolik.")
+	}
+
+	s.mu.Lock()
+	delete(s.adminInfo, adminID)
+	s.mu.Unlock()
+	return true, c.Send("Info userga yuborildi.")
 }
 
 func (s *SearchScene) handleReactionCallback(c tele.Context) error {
@@ -294,12 +385,82 @@ func (s *SearchScene) notifyAdminsAboutNotFound(c tele.Context, logID int64, que
 		"NOT_FOUND search\nlog_id=%d\nuser_id=%d\ntype=%s\nquery=%s",
 		logID, c.Sender().ID, queryType, queryValue,
 	)
+	markup := &tele.ReplyMarkup{
+		InlineKeyboard: [][]tele.InlineButton{
+			{{Text: "Retry", Data: fmt.Sprintf("nf_retry:%d", logID)}},
+			{{Text: "Ignore", Data: fmt.Sprintf("nf_ignore:%d", logID)}},
+			{{Text: "Info", Data: fmt.Sprintf("nf_info:%d", logID)}},
+		},
+	}
 	for _, adminID := range adminIDs {
-		_, err := c.Bot().Send(&tele.User{ID: adminID}, alert)
+		_, err := c.Bot().Send(&tele.User{ID: adminID}, alert, markup)
 		if err != nil {
 			log.Printf("notify admin %d error: %v", adminID, err)
 		}
 	}
+}
+
+func (s *SearchScene) retryNotFound(c tele.Context, notFoundLog *repository.SearchLog) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	var (
+		rows []repository.VectorSearchResult
+		err  error
+	)
+
+	if notFoundLog.QueryType == "image" {
+		imgBytes, fileName, err := readImageForRetry(notFoundLog.QueryImageURL)
+		if err != nil {
+			return c.Send("Retry image olishda xatolik.")
+		}
+		vector, err := s.ai.ImageUploadToVector(ctx, fileName, imgBytes)
+		if err != nil {
+			return c.Send("Retry image vector xatolik.")
+		}
+		rows, err = s.vectors.SearchSimilarImage(ctx, vector, defaultSimilarityThreshold, 1)
+	} else {
+		vector, err := s.ai.TextToVector(ctx, strings.TrimSpace(notFoundLog.QueryText))
+		if err != nil {
+			return c.Send("Retry text vector xatolik.")
+		}
+		rows, err = s.vectors.SearchSimilarText(ctx, vector, defaultSimilarityThreshold, 1)
+	}
+	if err != nil {
+		return c.Send("Retry search xatolik.")
+	}
+	if len(rows) == 0 {
+		return c.Send("Retry not found.")
+	}
+
+	row := rows[0]
+	textValue := ""
+	if row.Text.Valid {
+		textValue = strings.TrimSpace(row.Text.String)
+	}
+	if textValue == "" {
+		textValue = "(caption/text yo'q)"
+	}
+	reply := fmt.Sprintf("Top result\nType: %s\nScore: %.4f\nText: %s", row.Type, row.Score, textValue)
+
+	if row.Type == "image" && row.ImageURL.Valid {
+		imagePath := strings.TrimSpace(row.ImageURL.String)
+		if st, statErr := os.Stat(imagePath); statErr == nil && !st.IsDir() {
+			_, sendErr := c.Bot().Send(&tele.User{ID: notFoundLog.TgUserID}, &tele.Photo{
+				File:    tele.FromDisk(imagePath),
+				Caption: reply,
+			})
+			if sendErr == nil {
+				return c.Send("Retry topildi va userga yuborildi.")
+			}
+		}
+	}
+
+	_, sendErr := c.Bot().Send(&tele.User{ID: notFoundLog.TgUserID}, reply)
+	if sendErr != nil {
+		return c.Send("Userga natija yuborishda xatolik.")
+	}
+	return c.Send("Retry topildi va userga yuborildi.")
 }
 
 func (s *SearchScene) sendPage(c tele.Context, logID int64, page int) error {
@@ -403,6 +564,39 @@ func downloadTelegramFileBytes(c tele.Context, fileID string) ([]byte, string, e
 	fileName := filepath.Base(fileMeta.FilePath)
 	if fileName == "" || fileName == "." {
 		fileName = fileID + ".bin"
+	}
+	return data, fileName, nil
+}
+
+func readImageForRetry(source string) ([]byte, string, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, "", fmt.Errorf("empty image source")
+	}
+
+	if st, err := os.Stat(source); err == nil && !st.IsDir() {
+		data, readErr := os.ReadFile(source)
+		if readErr != nil {
+			return nil, "", readErr
+		}
+		return data, filepath.Base(source), nil
+	}
+
+	resp, err := http.Get(source)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", fmt.Errorf("http status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	fileName := filepath.Base(source)
+	if fileName == "" || fileName == "." || strings.Contains(fileName, "?") {
+		fileName = fmt.Sprintf("retry_%d.bin", time.Now().UnixNano())
 	}
 	return data, fileName, nil
 }
