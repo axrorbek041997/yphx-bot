@@ -28,7 +28,7 @@ func NewAddVectorScene(ai vectorClient, vectors *repository.VectorsRepo, filesDi
 }
 
 func (s *AddVectorScene) Start(c tele.Context) error {
-	return c.Send("Add vector rejimi.\nMatn yuboring yoki rasm yuboring.\nRasmga caption yozsangiz text ham saqlanadi.\n/cancel - chiqish")
+	return c.Send("Add vector rejimi.\nMatn yuboring yoki rasm yuboring.\nFormat: text || info (info ixtiyoriy)\n/cancel - chiqish")
 }
 
 func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
@@ -60,17 +60,18 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 			return false, c.Send("Rasmni vector qilishda xatolik.")
 		}
 
-		caption := strings.TrimSpace(msg.Caption)
+		textValue, infoValue := splitTextAndInfo(strings.TrimSpace(msg.Caption))
+		combinedText := strings.TrimSpace(joinTextInfoForVector(textValue, infoValue))
 		var textVector []float64
-		if caption != "" {
-			textVector, err = s.ai.TextToVector(ctx, caption)
+		if combinedText != "" {
+			textVector, err = s.ai.TextToVector(ctx, combinedText)
 			if err != nil {
 				return false, c.Send("Caption text vector olishda xatolik.")
 			}
 		}
 
 		imageHash := hashBytes(fileBytes)
-		saved, err := s.vectors.SaveImage(ctx, caption, localImagePath, imageHash, imageVector, textVector)
+		saved, err := s.vectors.SaveImage(ctx, textValue, infoValue, localImagePath, imageHash, imageVector, textVector)
 		if err != nil {
 			return false, c.Send("Image vector saqlashda xatolik.")
 		}
@@ -80,16 +81,17 @@ func (s *AddVectorScene) Handle(c tele.Context) (done bool, err error) {
 		return true, c.Send("Image vector saqlandi.")
 	}
 
-	text := strings.TrimSpace(c.Text())
-	if text == "" || strings.HasPrefix(text, "/") {
+	textValue, infoValue := splitTextAndInfo(strings.TrimSpace(c.Text()))
+	if textValue == "" || strings.HasPrefix(textValue, "/") {
 		return false, c.Send("Matn yoki rasm yuboring.")
 	}
+	combinedText := joinTextInfoForVector(textValue, infoValue)
 
-	textVector, err := s.ai.TextToVector(ctx, text)
+	textVector, err := s.ai.TextToVector(ctx, combinedText)
 	if err != nil {
 		return false, c.Send("Matn vector olishda xatolik.")
 	}
-	saved, err := s.vectors.SaveText(ctx, text, textVector)
+	saved, err := s.vectors.SaveText(ctx, textValue, infoValue, textVector)
 	if err != nil {
 		return false, c.Send("Text vector saqlashda xatolik.")
 	}
@@ -118,4 +120,26 @@ func (s *AddVectorScene) saveImageLocally(fileName string, data []byte) (string,
 func hashBytes(data []byte) string {
 	sum := md5.Sum(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func splitTextAndInfo(input string) (string, string) {
+	parts := strings.SplitN(input, "||", 2)
+	text := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		return text, ""
+	}
+	info := strings.TrimSpace(parts[1])
+	return text, info
+}
+
+func joinTextInfoForVector(text, info string) string {
+	text = strings.TrimSpace(text)
+	info = strings.TrimSpace(info)
+	if info == "" {
+		return text
+	}
+	if text == "" {
+		return info
+	}
+	return text + " " + info
 }

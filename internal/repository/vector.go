@@ -26,15 +26,15 @@ func NewVectorsRepo(db *sql.DB) *VectorsRepo {
 	return &VectorsRepo{db: db}
 }
 
-func (r *VectorsRepo) SaveText(ctx context.Context, text string, textVector []float64) (bool, error) {
-	normText := normalizeText(text)
+func (r *VectorsRepo) SaveText(ctx context.Context, text, info string, textVector []float64) (bool, error) {
+	normText := normalizeText(joinTextAndInfo(text, info))
 	textHash := hashString(normText)
 	vectorLiteral := toPgVectorLiteral(textVector)
 	res, err := r.db.ExecContext(ctx, `
-		insert into vectors (type, text, text_norm, text_hash, text_vector, vector)
-		values ('text', nullif($1, ''), nullif($2, ''), nullif($3, ''), $4::vector, $4::vector)
+		insert into vectors (type, text, info, text_norm, text_hash, text_vector, vector)
+		values ('text', nullif($1, ''), nullif($2, ''), nullif($3, ''), nullif($4, ''), $5::vector, $5::vector)
 		on conflict do nothing
-	`, text, normText, textHash, vectorLiteral)
+	`, text, info, normText, textHash, vectorLiteral)
 	if err != nil {
 		return false, fmt.Errorf("insert text vector: %w", err)
 	}
@@ -45,8 +45,8 @@ func (r *VectorsRepo) SaveText(ctx context.Context, text string, textVector []fl
 	return affected > 0, nil
 }
 
-func (r *VectorsRepo) SaveImage(ctx context.Context, text, imageURL, imageHash string, imageVector []float64, textVector []float64) (bool, error) {
-	normText := normalizeText(text)
+func (r *VectorsRepo) SaveImage(ctx context.Context, text, info, imageURL, imageHash string, imageVector []float64, textVector []float64) (bool, error) {
+	normText := normalizeText(joinTextAndInfo(text, info))
 	textHash := hashString(normText)
 	if strings.TrimSpace(imageHash) == "" {
 		imageHash = hashString(strings.TrimSpace(imageURL))
@@ -59,10 +59,10 @@ func (r *VectorsRepo) SaveImage(ctx context.Context, text, imageURL, imageHash s
 	}
 
 	res, err := r.db.ExecContext(ctx, `
-		insert into vectors (type, text, text_norm, text_hash, image_url, image_hash, image_vector, text_vector, vector)
-		values ('image', nullif($1, ''), nullif($2, ''), nullif($3, ''), nullif($4, ''), nullif($5, ''), $6::vector, $7::vector, $6::vector)
+		insert into vectors (type, text, info, text_norm, text_hash, image_url, image_hash, image_vector, text_vector, vector)
+		values ('image', nullif($1, ''), nullif($2, ''), nullif($3, ''), nullif($4, ''), nullif($5, ''), nullif($6, ''), $7::vector, $8::vector, $7::vector)
 		on conflict do nothing
-	`, text, normText, textHash, imageURL, imageHash, imageVectorLiteral, textVectorArg)
+	`, text, info, normText, textHash, imageURL, imageHash, imageVectorLiteral, textVectorArg)
 	if err != nil {
 		return false, fmt.Errorf("insert image vector: %w", err)
 	}
@@ -151,4 +151,16 @@ func normalizeText(text string) string {
 func hashString(input string) string {
 	sum := md5.Sum([]byte(input))
 	return hex.EncodeToString(sum[:])
+}
+
+func joinTextAndInfo(text, info string) string {
+	text = strings.TrimSpace(text)
+	info = strings.TrimSpace(info)
+	if info == "" {
+		return text
+	}
+	if text == "" {
+		return info
+	}
+	return text + " " + info
 }

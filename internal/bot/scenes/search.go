@@ -441,7 +441,7 @@ func (s *SearchScene) retryNotFound(c tele.Context, notFoundLog *repository.Sear
 	if textValue == "" {
 		textValue = "(caption/text yo'q)"
 	}
-	reply := fmt.Sprintf(textValue)
+	reply := textValue
 
 	if row.Type == "image" && row.ImageURL.Valid {
 		imagePath := strings.TrimSpace(row.ImageURL.String)
